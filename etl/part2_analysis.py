@@ -8,7 +8,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.functions import row_number
 from pyspark.sql.functions import col, count, regexp_replace, trim, upper 
 
-PARQUET_PATH = "/home/cs179g/project/CS179G/clean_chicago_crime"
+PARQUET_PATH = os.environ.get("PARQUET_PATH", "./clean_chicago_crime")
 JDBC_URL = "jdbc:mysql://127.0.0.1:3306/cs179g"
 JDBC_USER = "root"
 JDBC_PASSWORD = ""
