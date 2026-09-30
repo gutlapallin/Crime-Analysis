@@ -1,13 +1,13 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, hour, month, dayofmonth, count, when, date_format
-
+import os
 # Start Spark
 spark = SparkSession.builder \
     .appName("ChicagoCrimeAnalysis") \
     .getOrCreate()
 
 # Load the cleaned Parquet dataset
-crime_df = spark.read.parquet("/home/cs179g/project/CS179G/clean_chicago_crime")
+crime_df = spark.read.parquet(os.environ.get("PARQUET_PATH", "./clean_chicago_crime"))
 print("Data Loaded Successfully")
 
 # -------------------------

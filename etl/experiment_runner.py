@@ -4,7 +4,7 @@ import time
 import json
 import matplotlib.pyplot as plt
 
-PARQUET_PATH = "/home/cs179g/project/CS179G/clean_chicago_crime"
+PARQUET_PATH = os.environ.get("PARQUET_PATH", "./clean_chicago_crime")
 RESULTS_FILE = "experiment_results.json"
 
 def run_experiment(num_workers, data_fraction, experiment_name):

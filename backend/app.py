@@ -19,11 +19,15 @@ def cors_headers(response):
     return response
 
 DB_CONFIG = {
-    "host": "127.0.0.1",
-    "user": "root",
-    "password": "",
-    "database": "cs179g"
+    "user": os.getenv("DB_USER", "root"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME", "cs179g"),
 }
+if os.getenv("DB_SOCKET"):  # Cloud SQL on Cloud Run uses a unix socket
+    DB_CONFIG["unix_socket"] = os.getenv("DB_SOCKET")
+else:
+    DB_CONFIG["host"] = os.getenv("DB_HOST", "127.0.0.1")
+    DB_CONFIG["port"] = int(os.getenv("DB_PORT", "3306"))
 
 CATEGORIES = {
     "Time-of-Day": {
