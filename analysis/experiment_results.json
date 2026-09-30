@@ -1,0 +1,162 @@
+[
+  {
+    "experiment_name": "workers_1_data_10",
+    "num_workers": 1,
+    "data_fraction": 0.1,
+    "record_count": 707850,
+    "analysis_time": 2.1122536659240723,
+    "total_time": 14.836241960525513
+  },
+  {
+    "experiment_name": "workers_1_data_25",
+    "num_workers": 1,
+    "data_fraction": 0.25,
+    "record_count": 1771013,
+    "analysis_time": 2.441965341567993,
+    "total_time": 11.14898133277893
+  },
+  {
+    "experiment_name": "workers_1_data_50",
+    "num_workers": 1,
+    "data_fraction": 0.5,
+    "record_count": 3539303,
+    "analysis_time": 3.3470022678375244,
+    "total_time": 22.0995671749115
+  },
+  {
+    "experiment_name": "workers_1_data_75",
+    "num_workers": 1,
+    "data_fraction": 0.75,
+    "record_count": 5308798,
+    "analysis_time": 3.0693142414093018,
+    "total_time": 34.842135190963745
+  },
+  {
+    "experiment_name": "workers_1_data_100",
+    "num_workers": 1,
+    "data_fraction": 1.0,
+    "record_count": 7078879,
+    "analysis_time": 3.2410647869110107,
+    "total_time": 26.243902444839478
+  },
+  {
+    "experiment_name": "workers_2_data_10",
+    "num_workers": 2,
+    "data_fraction": 0.1,
+    "record_count": 707850,
+    "analysis_time": 1.0436570644378662,
+    "total_time": 6.43411111831665
+  },
+  {
+    "experiment_name": "workers_2_data_25",
+    "num_workers": 2,
+    "data_fraction": 0.25,
+    "record_count": 1771013,
+    "analysis_time": 1.2543861865997314,
+    "total_time": 8.407214641571045
+  },
+  {
+    "experiment_name": "workers_2_data_50",
+    "num_workers": 2,
+    "data_fraction": 0.5,
+    "record_count": 3539303,
+    "analysis_time": 1.710510015487671,
+    "total_time": 14.220230102539062
+  },
+  {
+    "experiment_name": "workers_2_data_75",
+    "num_workers": 2,
+    "data_fraction": 0.75,
+    "record_count": 5308798,
+    "analysis_time": 1.9481806755065918,
+    "total_time": 18.196925401687622
+  },
+  {
+    "experiment_name": "workers_2_data_100",
+    "num_workers": 2,
+    "data_fraction": 1.0,
+    "record_count": 7078879,
+    "analysis_time": 2.826965570449829,
+    "total_time": 23.87924075126648
+  },
+  {
+    "experiment_name": "workers_4_data_10",
+    "num_workers": 4,
+    "data_fraction": 0.1,
+    "record_count": 707850,
+    "analysis_time": 1.0229995250701904,
+    "total_time": 5.384981870651245
+  },
+  {
+    "experiment_name": "workers_4_data_25",
+    "num_workers": 4,
+    "data_fraction": 0.25,
+    "record_count": 1771013,
+    "analysis_time": 1.1234395503997803,
+    "total_time": 8.731719017028809
+  },
+  {
+    "experiment_name": "workers_4_data_50",
+    "num_workers": 4,
+    "data_fraction": 0.5,
+    "record_count": 3539303,
+    "analysis_time": 1.4782371520996094,
+    "total_time": 12.869186878204346
+  },
+  {
+    "experiment_name": "workers_4_data_75",
+    "num_workers": 4,
+    "data_fraction": 0.75,
+    "record_count": 5308798,
+    "analysis_time": 1.9608371257781982,
+    "total_time": 18.83890175819397
+  },
+  {
+    "experiment_name": "workers_4_data_100",
+    "num_workers": 4,
+    "data_fraction": 1.0,
+    "record_count": 7078879,
+    "analysis_time": 2.8688249588012695,
+    "total_time": 24.802478313446045
+  },
+  {
+    "experiment_name": "workers_8_data_10",
+    "num_workers": 8,
+    "data_fraction": 0.1,
+    "record_count": 707850,
+    "analysis_time": 0.968947172164917,
+    "total_time": 5.667909622192383
+  },
+  {
+    "experiment_name": "workers_8_data_25",
+    "num_workers": 8,
+    "data_fraction": 0.25,
+    "record_count": 1771013,
+    "analysis_time": 1.4195308685302734,
+    "total_time": 8.652902126312256
+  },
+  {
+    "experiment_name": "workers_8_data_50",
+    "num_workers": 8,
+    "data_fraction": 0.5,
+    "record_count": 3539303,
+    "analysis_time": 1.548445224761963,
+    "total_time": 13.358097076416016
+  },
+  {
+    "experiment_name": "workers_8_data_75",
+    "num_workers": 8,
+    "data_fraction": 0.75,
+    "record_count": 5308798,
+    "analysis_time": 1.776134967803955,
+    "total_time": 18.56690764427185
+  },
+  {
+    "experiment_name": "workers_8_data_100",
+    "num_workers": 8,
+    "data_fraction": 1.0,
+    "record_count": 7078879,
+    "analysis_time": 3.056295394897461,
+    "total_time": 24.28778576850891
+  }
+]

@@ -1,0 +1,12 @@
+clean_chicago_crime/
+clean_chicago_crime.zip
+*.parquet
+*.swp
+*.swo
+*.save
+__pycache__/
+.env
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+node_modules/
