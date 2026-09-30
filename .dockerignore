@@ -1,0 +1,9 @@
+.git
+.env
+**/node_modules
+**/__pycache__
+frontend/dist
+clean_chicago_crime
+data-cleaning
+etl
+docs

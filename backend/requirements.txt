@@ -1,0 +1,6 @@
+flask
+gunicorn
+pymysql
+cryptography
+langchain-core
+langchain-google-genai
