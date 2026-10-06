@@ -1,5 +1,5 @@
 FROM python:3.11-slim
-RUN apt-get update && apt-get install -y openjdk-17-jre-headless curl \
+RUN apt-get update && apt-get install -y openjdk-21-jre-headless curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN mkdir -p /libs && curl -fL -o /libs/mysql-connector-j.jar \
