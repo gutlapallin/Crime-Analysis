@@ -1,0 +1,41 @@
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: cs179g
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      retries: 20
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PASSWORD: ${DB_PASSWORD}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  etl:
+    build: ./etl
+    profiles: ["etl"]
+    environment:
+      JDBC_URL: jdbc:mysql://db:3306/cs179g
+      DB_PASSWORD: ${DB_PASSWORD}
+      PARQUET_PATH: /data/clean_chicago_crime
+    volumes:
+      - ./clean_chicago_crime:/data/clean_chicago_crime:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dbdata:
