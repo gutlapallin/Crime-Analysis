@@ -3,6 +3,7 @@ import './App.css'
 import ChartView from './components/ChartView'
 import InsightCard from './components/InsightCard'
 import { TABLE_META } from './constants/tables'
+import AskPanel from './AskPanel'
 
 function buildNotesText(title, notes) {
   const lines = [`Notes for: ${title}`]
@@ -36,6 +37,7 @@ export default function App() {
   const [data, setData] = useState([])
   const [stats, setStats] = useState({})
   const [loadingData, setLoadingData] = useState(false)
+  const [view, setView] = useState('explore')
   const [error, setError] = useState(null)
 
   const [insights, setInsights] = useState([])
@@ -205,12 +207,24 @@ export default function App() {
           </p>
         </div>
         <div className="app-header-actions">
-          {selectedTable && (
-            <button
-              type="button"
-              className="home-tab-btn"
-              onClick={goHome}
-            >
+          <button
+            type="button"
+            className="home-tab-btn"
+            style={view === 'explore' ? { fontWeight: 700 } : undefined}
+            onClick={() => setView('explore')}
+          >
+            Explore
+          </button>
+          <button
+            type="button"
+            className="home-tab-btn"
+            style={view === 'ask' ? { fontWeight: 700 } : undefined}
+            onClick={() => setView('ask')}
+          >
+            Ask the data
+          </button>
+          {selectedTable && view === 'explore' && (
+            <button type="button" className="home-tab-btn" onClick={goHome}>
               Home
             </button>
           )}
@@ -267,6 +281,7 @@ export default function App() {
                           onClick={() => {
                             setSelectedTable(table)
                             setSelectedLabel(label)
+                            setView('explore')
                           }}
                         >
                           <span className="sidebar-link-label">
@@ -286,7 +301,13 @@ export default function App() {
         </aside>
 
         <main className="shell-main">
-          {!selectedTable && (
+          {view === 'ask' && (
+            <section className="panel">
+              <AskPanel />
+            </section>
+          )}
+
+          {view === 'explore' && !selectedTable && (
             <section className="panel">
               <div className="intro-grid">
                 <div className="intro-main">
@@ -347,7 +368,7 @@ export default function App() {
             </section>
           )}
 
-          {selectedTable && (
+          {view === 'explore' && selectedTable && (
             <>
               <section className="panel">
                 <div className="panel-header">

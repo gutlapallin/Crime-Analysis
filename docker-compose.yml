@@ -20,6 +20,12 @@ services:
       DB_HOST: db
       DB_PASSWORD: ${DB_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      READONLY_USER: ${READONLY_USER}
+      READONLY_PASSWORD: ${READONLY_PASSWORD}
+      RAW_PARQUET_GLOB: /data/clean_chicago_crime/*.parquet
+    volumes:
+      - ./clean_chicago_crime:/data/clean_chicago_crime:ro
     depends_on:
       db:
         condition: service_healthy

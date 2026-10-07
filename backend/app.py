@@ -7,6 +7,7 @@ import math
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
+
 app = Flask(__name__)
 
 REACT_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
@@ -64,7 +65,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 llm = None
 if GEMINI_API_KEY:
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
         temperature=0.2,
         api_key=GEMINI_API_KEY,
     )
@@ -127,6 +128,20 @@ def get_insight_rows(payload):
     if not isinstance(sample_rows, list):
         sample_rows = []
     return [row for row in sample_rows if isinstance(row, dict)]
+
+from ask import answer_question
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+limiter = Limiter(get_remote_address, app=app, default_limits=[])
+
+
+@app.route("/api/ask", methods=["POST"])
+@limiter.limit("10 per minute")
+def ask():
+    payload = request.get_json(silent=True) or {}
+    result, status = answer_question(payload.get("question"), llm)
+    return jsonify(result), status
 
 
 @app.route("/api/categories")
