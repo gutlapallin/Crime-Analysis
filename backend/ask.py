@@ -12,6 +12,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from raw_engine import RAW_SCHEMA, validate_raw_sql, run_raw
 from table_docs import TABLE_DOCS
+from quick_answers import quick_answer
 
 log = logging.getLogger(__name__)
 
@@ -179,23 +180,59 @@ def _fallback_answer(rows):
 _cache = {}
 _CACHE_MAX = 200
 
+# After a quota error, skip the model for a while and use built-in answers
+_QUOTA_COOLDOWN = 600
+_llm_down_until = 0.0
+
+
+def _is_quota_error(e):
+    return "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
+
+
+def _remember(key, result):
+    if len(_cache) >= _CACHE_MAX:
+        _cache.pop(next(iter(_cache)))
+    _cache[key] = result
+
 
 def answer_question(question, llm):
-    key = " ".join((question or "").lower().split())
+    global _llm_down_until
+    question = (question or "").strip()[:500]
+    if not question:
+        return {"error": "Please enter a question."}, 400
+    key = " ".join(question.lower().split())
     if key in _cache:
         return _cache[key], 200
+
+    failure = None
+    if llm is not None and time.time() >= _llm_down_until:
+        try:
+            result, status = _answer_question(question, llm)
+            if status == 200:
+                _remember(key, result)
+                return result, status
+            failure = result
+        except Exception as e:
+            log.exception("Ask request failed; trying a built-in answer")
+            if _is_quota_error(e):
+                _llm_down_until = time.time() + _QUOTA_COOLDOWN
+            failure = {"error": f"Could not answer the question: {e}"}
+
     try:
-        result, status = _answer_question(question, llm)
-        if status == 200:
-            if len(_cache) >= _CACHE_MAX:
-                _cache.pop(next(iter(_cache)))
-            _cache[key] = result
-        return result, status
-    except Exception as e:
-        log.exception("Ask request failed")
-        if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-            return {"error": "The AI model's daily free quota is used up. Please try again later."}, 429
-        return {"error": f"Could not answer the question: {e}"}, 502
+        result = quick_answer(question, run_readonly)
+    except Exception:
+        log.exception("Built-in answer failed")
+        result = None
+    if result:
+        _remember(key, result)
+        return result, 200
+
+    if failure and not _is_quota_error(failure.get("error", "")) and llm is not None \
+            and time.time() >= _llm_down_until:
+        return failure, 502
+    return {"error": "The AI model is busy right now, so only common questions can be answered "
+                     "(time of day, months, seasons, years, holidays, locations, community areas). "
+                     "Try one of the example questions."}, 503
 
 
 def _answer_question(question, llm):
