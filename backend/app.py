@@ -62,13 +62,27 @@ CATEGORIES = {
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-llm = None
-if GEMINI_API_KEY:
-    llm = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+# Free-tier quota is per model, so when one model's daily limit runs out
+# the next one in the list is tried automatically.
+GEMINI_MODELS = [os.getenv("GEMINI_MODEL") or "gemini-3.8-flash"] + [
+    m.strip()
+    for m in (os.getenv("GEMINI_FALLBACK_MODELS") or "gemini-2.5-flash,gemini-2.5-flash-lite").split(",")
+    if m.strip()
+]
+
+
+def make_llm(model):
+    return ChatGoogleGenerativeAI(
+        model=model,
         temperature=0.2,
         api_key=GEMINI_API_KEY,
+        max_retries=2,
     )
+
+
+llm = None
+if GEMINI_API_KEY:
+    llm = make_llm(GEMINI_MODELS[0]).with_fallbacks([make_llm(m) for m in GEMINI_MODELS[1:]])
 
 insight_prompt = ChatPromptTemplate.from_messages(
     [

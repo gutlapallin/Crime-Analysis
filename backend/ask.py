@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+from decimal import Decimal
 import pymysql
 import sqlglot
 from sqlglot import exp
@@ -142,20 +143,58 @@ def _json(text):
 
 
 def _invoke(chain, inputs, tries=3):
+    # Retry brief outages only; retrying a quota (429) error just burns more quota
     for attempt in range(tries):
         try:
             return chain.invoke(inputs)
         except Exception as e:
-            transient = any(s in str(e) for s in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
+            transient = any(s in str(e) for s in ("503", "UNAVAILABLE"))
             if not transient or attempt == tries - 1:
                 raise
             time.sleep(2 * (attempt + 1))
 
+
+def _is_number(v):
+    return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
+
+
+def _fallback_answer(rows):
+    """Plain summary used when the model can't write one, so the data still shows."""
+    if not rows:
+        return {"answer": "The query ran but returned no rows.", "chart": "none", "x": "", "y": ""}
+    cols = list(rows[0].keys())
+    y = next((c for c in reversed(cols) if _is_number(rows[0][c])), None)
+    x = next((c for c in cols if c != y), None)
+    if not y or not x:
+        return {"answer": f"Here are the results ({len(rows)} rows).", "chart": "none", "x": "", "y": ""}
+    top = max(rows, key=lambda r: float(r[y] or 0))
+    return {
+        "answer": f"Here are the results ({len(rows)} rows). The highest {y} is {top[y]} for {x} {top[x]}.",
+        "chart": "bar" if len(rows) > 1 else "none",
+        "x": x,
+        "y": y,
+    }
+
+
+_cache = {}
+_CACHE_MAX = 200
+
+
 def answer_question(question, llm):
+    key = " ".join((question or "").lower().split())
+    if key in _cache:
+        return _cache[key], 200
     try:
-        return _answer_question(question, llm)
+        result, status = _answer_question(question, llm)
+        if status == 200:
+            if len(_cache) >= _CACHE_MAX:
+                _cache.pop(next(iter(_cache)))
+            _cache[key] = result
+        return result, status
     except Exception as e:
         log.exception("Ask request failed")
+        if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+            return {"error": "The AI model's daily free quota is used up. Please try again later."}, 429
         return {"error": f"Could not answer the question: {e}"}, 502
 
 
@@ -189,8 +228,12 @@ def _answer_question(question, llm):
     except Exception as e:
         return {"error": f"Query failed: {e}", "sql": sql}, 500
 
-    out = _json(_text(_invoke(ANSWER_PROMPT | llm,
-        {"question": question, "sql": sql, "rows": json.dumps(rows, default=str)[:20000]})))
+    try:
+        out = _json(_text(_invoke(ANSWER_PROMPT | llm,
+            {"question": question, "sql": sql, "rows": json.dumps(rows, default=str)[:20000]})))
+    except Exception:
+        log.exception("Answer summary failed; showing the data without it")
+        out = _fallback_answer(rows)
     used = sorted({t.name for t in sqlglot.parse_one(
         sql, read="duckdb" if is_raw else "mysql").find_all(exp.Table)})
     out.update({"sql": sql, "rows": rows, "tables_used": used, "source": source})
