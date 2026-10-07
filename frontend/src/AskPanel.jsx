@@ -36,7 +36,7 @@ export default function AskPanel() {
         setError(
           res.status === 429
             ? 'Too many questions. Please wait a minute and try again.'
-            : (data && data.error) || 'Something went wrong. Please try again.'
+            : (data && data.error) || `Something went wrong (HTTP ${res.status}). Please try again.`
         )
       } else {
         setResult(data)

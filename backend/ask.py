@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -10,6 +11,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from raw_engine import RAW_SCHEMA, validate_raw_sql, run_raw
 from table_docs import TABLE_DOCS
+
+log = logging.getLogger(__name__)
 
 ALLOWED = {d["table"] for d in TABLE_DOCS}
 DOCS_BY_TABLE = {d["table"]: d for d in TABLE_DOCS}
@@ -33,8 +36,13 @@ def _get_store():
 
 
 def retrieve_tables(question, k=4):
-    hits = _get_store().similarity_search(question, k=k)
-    return [DOCS_BY_TABLE[h.metadata["table"]] for h in hits]
+    try:
+        hits = _get_store().similarity_search(question, k=k)
+        return [DOCS_BY_TABLE[h.metadata["table"]] for h in hits]
+    except Exception:
+        # The table list is small, so fall back to all of it if embeddings fail
+        log.exception("Table retrieval failed; using all tables")
+        return TABLE_DOCS
 
 
 SQL_PROMPT = ChatPromptTemplate.from_messages([
@@ -88,9 +96,12 @@ def validate_sql(sql):
 
 
 def run_readonly(sql):
+    # docker-compose passes unset vars as "", so fall back with `or`
+    readonly_user = os.getenv("READONLY_USER")
     cfg = {
-        "user": os.getenv("READONLY_USER", "readonly"),
-        "password": os.getenv("READONLY_PASSWORD", ""),
+        "user": readonly_user or os.getenv("DB_USER") or "root",
+        "password": (os.getenv("READONLY_PASSWORD") if readonly_user
+                     else os.getenv("DB_PASSWORD")) or "",
         "database": os.getenv("DB_NAME", "cs179g"),
         "read_timeout": 10,
         "cursorclass": pymysql.cursors.DictCursor,
@@ -117,7 +128,18 @@ def _text(msg):
 
 
 def _json(text):
-    return json.loads(re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip())
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, flags=re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+    return {"answer": text, "chart": "none", "x": "", "y": ""}
+
 
 def _invoke(chain, inputs, tries=3):
     for attempt in range(tries):
@@ -130,6 +152,14 @@ def _invoke(chain, inputs, tries=3):
             time.sleep(2 * (attempt + 1))
 
 def answer_question(question, llm):
+    try:
+        return _answer_question(question, llm)
+    except Exception as e:
+        log.exception("Ask request failed")
+        return {"error": f"Could not answer the question: {e}"}, 502
+
+
+def _answer_question(question, llm):
     question = (question or "").strip()[:500]
     if not question:
         return {"error": "Please enter a question."}, 400
@@ -165,16 +195,3 @@ def answer_question(question, llm):
         sql, read="duckdb" if is_raw else "mysql").find_all(exp.Table)})
     out.update({"sql": sql, "rows": rows, "tables_used": used, "source": source})
     return out, 200
-
-import time
-
-
-def _invoke(chain, inputs, tries=3):
-    for attempt in range(tries):
-        try:
-            return chain.invoke(inputs)
-        except Exception as e:
-            transient = any(s in str(e) for s in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
-            if not transient or attempt == tries - 1:
-                raise
-            time.sleep(2 * (attempt + 1))
