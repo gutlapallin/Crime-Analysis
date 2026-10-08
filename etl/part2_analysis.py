@@ -8,6 +8,7 @@ import time
 from pyspark.sql.window import Window
 from pyspark.sql.functions import row_number
 from pyspark.sql.functions import col, count, regexp_replace, trim, upper 
+from pyspark.sql.functions import min as spark_min, max as spark_max
 
 PARQUET_PATH = os.environ.get("PARQUET_PATH", "./clean_chicago_crime")
 JDBC_URL = os.environ.get("JDBC_URL", "jdbc:mysql://127.0.0.1:3306/cs179g")
@@ -217,6 +218,18 @@ def main():
 
     yearly_crimes = df.groupBy("year").agg(count("*").alias("total_crimes")).orderBy("year")
     write_to_mysql(yearly_crimes, "yearly_crimes", spark)
+
+    # ---- Forecasting prep: find the date range of the data ----
+    date_range = df.agg(
+        spark_min("date").alias("min_date"),
+        spark_max("date").alias("max_date"),
+    ).collect()[0]
+
+    min_date = date_range["min_date"]
+    max_date = date_range["max_date"]
+
+    print("Data starts:", min_date)
+    print("Data ends:  ", max_date)
 
 
     keywords = "(?i).*(FISTS|MOTOR VEHICLE|SCOOTER|NON-VEH|NON-MOTOR VEHICLE|NEW STAND).*"
