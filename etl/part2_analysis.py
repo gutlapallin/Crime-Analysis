@@ -260,6 +260,12 @@ def main():
         .orderBy("year", "month")
     write_to_mysql(monthly_trend, "monthly_trend", spark)
 
+    monthly_trend_by_type = df_months.filter(col("primary_type").isNotNull()) \
+        .groupBy("year", "month", "primary_type") \
+        .agg(count("*").alias("total")) \
+        .orderBy("year", "month", "primary_type")
+    write_to_mysql(monthly_trend_by_type, "monthly_trend_by_type", spark)
+
 
     keywords = "(?i).*(FISTS|MOTOR VEHICLE|SCOOTER|NON-VEH|NON-MOTOR VEHICLE|NEW STAND).*"
 

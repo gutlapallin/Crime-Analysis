@@ -134,3 +134,18 @@ CREATE TABLE IF NOT EXISTS halloween_vs_nonhalloween_by_type (
     total BIGINT,        
     PRIMARY KEY (day_type, primary_type)
 );
+
+CREATE TABLE IF NOT EXISTS monthly_trend (
+    year INT,
+    month INT,
+    total_crimes BIGINT,
+    PRIMARY KEY (year, month)
+);
+
+CREATE TABLE IF NOT EXISTS monthly_trend_by_type (
+    year INT,
+    month INT,
+    primary_type VARCHAR(100),
+    total BIGINT,
+    PRIMARY KEY (year, month, primary_type)
+);
