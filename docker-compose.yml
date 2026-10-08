@@ -11,6 +11,8 @@ services:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
       interval: 5s
       retries: 20
+    ports:
+      - "3307:3306"
 
   app:
     build: .
@@ -43,6 +45,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+
 
 volumes:
   dbdata:
