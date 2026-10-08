@@ -8,13 +8,17 @@ import time
 from pyspark.sql.window import Window
 from pyspark.sql.functions import row_number
 from pyspark.sql.functions import col, count, regexp_replace, trim, upper 
-from pyspark.sql.functions import min as spark_min, max as spark_max
+from pyspark.sql.functions import min as spark_min, max as spark_max, date_format
 
 PARQUET_PATH = os.environ.get("PARQUET_PATH", "./clean_chicago_crime")
 JDBC_URL = os.environ.get("JDBC_URL", "jdbc:mysql://127.0.0.1:3306/cs179g")
 JDBC_USER = os.environ.get("DB_USER", "root")
 JDBC_PASSWORD = os.environ.get("DB_PASSWORD", "")
 JDBC_DRIVER = "com.mysql.cj.jdbc.Driver"
+# The cleaned parquet timestamps were parsed in Pacific time (the class cluster's
+# time zone), so read them back in the same zone. Otherwise a UTC machine such as
+# the Docker container shifts every hour/day/month by 7-8 hours.
+SPARK_TIMEZONE = os.environ.get("SPARK_TIMEZONE", "America/Los_Angeles")
 
 def normalize_location(location_col):
     n = trim(upper(location_col))
@@ -63,6 +67,7 @@ def main():
 
     spark = SparkSession.builder \
         .appName("ChicagoCrimePart2") \
+        .config("spark.sql.session.timeZone", SPARK_TIMEZONE) \
         .getOrCreate()
 
     print("Reading cleaned data from Parquet...")
@@ -220,9 +225,11 @@ def main():
     write_to_mysql(yearly_crimes, "yearly_crimes", spark)
 
     # ---- Forecasting prep: find the date range of the data ----
+    # date_format makes Spark render the dates in its session time zone;
+    # collecting raw timestamps would convert them to the machine's clock instead
     date_range = df.agg(
-        spark_min("date").alias("min_date"),
-        spark_max("date").alias("max_date"),
+        date_format(spark_min("date"), "yyyy-MM-dd HH:mm:ss").alias("min_date"),
+        date_format(spark_max("date"), "yyyy-MM-dd HH:mm:ss").alias("max_date"),
     ).collect()[0]
 
     min_date = date_range["min_date"]
