@@ -1,11 +1,13 @@
-"""Forecast monthly Chicago crime from the monthly_trend table in MySQL.
-
-Run after the Spark ETL (part2_analysis.py) has written monthly_trend.
-"""
 import os
-
 import pandas as pd
 import pymysql
+BACKTEST_TRAIN_END = "2019-02"
+BACKTEST_START = "2019-03"
+BACKTEST_END = "2020-02"
+TRAIN_END = "2020-02"
+COVID_START = "2020-03"
+COVID_END = "2020-06"
+HORIZON = 12  # months to forecast
 
 
 def connect():
@@ -35,6 +37,15 @@ def load_series(conn):
         raise ValueError(f"monthly_trend is missing months: {[d.strftime('%Y-%m') for d in missing]}")
     return series
 
+def split_periods(series,start=None):
+
+    return {
+        "backtest_train": series[start:BACKTEST_TRAIN_END],
+        "backtest_test": series[BACKTEST_START:BACKTEST_END],
+        "train": series[start:TRAIN_END],
+        "covid": series[COVID_START:COVID_END],
+        "forecast_dates": pd.date_range(start=COVID_START, periods=HORIZON, freq="MS"),
+    }
 
 def main():
     conn = connect()
@@ -43,9 +54,12 @@ def main():
     finally:
         conn.close()
 
-    print(f"Loaded {len(series)} months: {series.index[0]:%Y-%m} to {series.index[-1]:%Y-%m}")
-    print(series.tail(6).to_string())
+        print(f"Loaded {len(series)} months: {series.index[0]:%Y-%m} to {series.index[-1]:%Y-%m}")
 
+        periods = split_periods(series)
+        for name, part in periods.items():
+            dates = part if name == "forecast_dates" else part.index
+            print(f"  {name:<15} {len(dates):>3} months  {dates[0]:%Y-%m} -> {dates[-1]:%Y-%m}")
 
 if __name__ == "__main__":
     main()
