@@ -47,6 +47,22 @@ def split_periods(series,start=None):
         "forecast_dates": pd.date_range(start=COVID_START, periods=HORIZON, freq="MS"),
     }
 
+def mae(actual, predicted):
+    """Average size of the error, in crimes per month."""
+    return float((actual - predicted).abs().mean())
+
+
+def mape(actual, predicted):
+    """Average error as a percentage of the actual value (skips months with 0 crimes)."""
+    nonzero = actual != 0
+    errors = (actual[nonzero] - predicted[nonzero]).abs() / actual[nonzero]
+    return float(errors.mean() * 100)
+
+
+def seasonal_naive(series, dates):
+    """Baseline forecast: each month equals the same month one year earlier."""
+    return series.shift(12).reindex(dates)
+
 def main():
     conn = connect()
     try:
@@ -60,6 +76,11 @@ def main():
         for name, part in periods.items():
             dates = part if name == "forecast_dates" else part.index
             print(f"  {name:<15} {len(dates):>3} months  {dates[0]:%Y-%m} -> {dates[-1]:%Y-%m}")
+
+            # Baseline accuracy on the backtest year (Mar 2019 - Feb 2020)
+        actual = periods["backtest_test"]
+        baseline = seasonal_naive(series, actual.index)
+        print(f"\nBaseline (seasonal naive)  MAE {mae(actual, baseline):,.0f}   MAPE {mape(actual, baseline):.1f}%")
 
 if __name__ == "__main__":
     main()
