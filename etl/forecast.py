@@ -1,6 +1,8 @@
 import os
 import pandas as pd
 import pymysql
+import warnings
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
 BACKTEST_TRAIN_END = "2019-02"
 BACKTEST_START = "2019-03"
 BACKTEST_END = "2020-02"
@@ -63,6 +65,30 @@ def seasonal_naive(series, dates):
     """Baseline forecast: each month equals the same month one year earlier."""
     return series.shift(12).reindex(dates)
 
+def fit_and_forecast(train, dates, alpha=0.2):
+    """Fit Holt-Winters (ETS) on train and forecast the given dates.
+
+    Returns a DataFrame indexed by date with predicted, lower and upper columns;
+    alpha=0.2 gives an 80% prediction interval.
+    """
+    model = ETSModel(
+        train,
+        error="mul",
+        trend="add",
+        damped_trend=True,
+        seasonal="mul",
+        seasonal_periods=12,
+    )
+    # The optimizer often warns about convergence even when the fit is fine;
+    # hide that noise and judge the model by its backtest error instead.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = model.fit(disp=False)
+
+    frame = result.get_prediction(start=dates[0], end=dates[-1]).summary_frame(alpha=alpha)
+    frame = frame.rename(columns={"mean": "predicted", "pi_lower": "lower", "pi_upper": "upper"})
+    return frame[["predicted", "lower", "upper"]]
+
 def main():
     conn = connect()
     try:
@@ -82,5 +108,20 @@ def main():
         baseline = seasonal_naive(series, actual.index)
         print(f"\nBaseline (seasonal naive)  MAE {mae(actual, baseline):,.0f}   MAPE {mape(actual, baseline):.1f}%")
 
+            # Holt-Winters model on the same backtest year
+        forecast = fit_and_forecast(periods["backtest_train"], actual.index)
+        print(f"Holt-Winters (ETS)         MAE {mae(actual, forecast['predicted']):,.0f}   "
+            f"MAPE {mape(actual, forecast['predicted']):.1f}%")
+
+        # Month-by-month comparison
+        table = pd.DataFrame({
+            "actual": actual,
+            "baseline": baseline,
+            "model": forecast["predicted"],
+            "lower": forecast["lower"],
+            "upper": forecast["upper"],
+        }).round(0)
+        print()
+        print(table.to_string())
 if __name__ == "__main__":
     main()
