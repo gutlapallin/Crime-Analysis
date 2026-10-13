@@ -11,6 +11,10 @@ COVID_START = "2020-03"
 COVID_END = "2020-06"
 HORIZON = 12  # months to forecast
 
+# Combinations to compare in the backtest. None = start from the first month.
+TRAIN_STARTS = [None, "2012-01"]
+SEASONAL_TYPES = ["mul", "add"]
+
 
 def connect():
     return pymysql.connect(
@@ -24,10 +28,10 @@ def connect():
 
 def load_series(conn):
     """Return citywide monthly crime counts as a Series indexed by month start."""
-    df = pd.read_sql(
-        "SELECT year, month, total_crimes FROM monthly_trend ORDER BY year, month",
-        conn,
-    )
+    with conn.cursor() as cur:
+        cur.execute("SELECT year, month, total_crimes FROM monthly_trend ORDER BY year, month")
+        rows = cur.fetchall()
+    df = pd.DataFrame(rows, columns=["year", "month", "total_crimes"])
     dates = pd.to_datetime(dict(year=df["year"], month=df["month"], day=1))
     series = pd.Series(df["total_crimes"].astype(float).values, index=dates, name="ALL")
 
@@ -65,7 +69,7 @@ def seasonal_naive(series, dates):
     """Baseline forecast: each month equals the same month one year earlier."""
     return series.shift(12).reindex(dates)
 
-def fit_and_forecast(train, dates, alpha=0.2):
+def fit_and_forecast(train, dates, seasonal="mul", alpha=0.2):
     """Fit Holt-Winters (ETS) on train and forecast the given dates.
 
     Returns a DataFrame indexed by date with predicted, lower and upper columns;
@@ -76,7 +80,7 @@ def fit_and_forecast(train, dates, alpha=0.2):
         error="mul",
         trend="add",
         damped_trend=True,
-        seasonal="mul",
+        seasonal=seasonal,
         seasonal_periods=12,
     )
     # The optimizer often warns about convergence even when the fit is fine;
@@ -89,6 +93,25 @@ def fit_and_forecast(train, dates, alpha=0.2):
     frame = frame.rename(columns={"mean": "predicted", "pi_lower": "lower", "pi_upper": "upper"})
     return frame[["predicted", "lower", "upper"]]
 
+def choose_model(series):
+    """Backtest every training-start / seasonality combination, best (lowest MAPE) first."""
+    results = []
+    for start in TRAIN_STARTS:
+        periods = split_periods(series, start)
+        actual = periods["backtest_test"]
+        for seasonal in SEASONAL_TYPES:
+            forecast = fit_and_forecast(periods["backtest_train"], actual.index, seasonal=seasonal)
+            results.append({
+                "train_start": start or f"{series.index[0]:%Y-%m}",
+                "start": start,
+                "seasonal": seasonal,
+                "mae": mae(actual, forecast["predicted"]),
+                "mape": mape(actual, forecast["predicted"]),
+            })
+    results = pd.DataFrame(results).sort_values("mape").reset_index(drop=True)
+    return results, results.iloc[0]
+
+
 def main():
     conn = connect()
     try:
@@ -96,32 +119,42 @@ def main():
     finally:
         conn.close()
 
-        print(f"Loaded {len(series)} months: {series.index[0]:%Y-%m} to {series.index[-1]:%Y-%m}")
+    print(f"Loaded {len(series)} months: {series.index[0]:%Y-%m} to {series.index[-1]:%Y-%m}")
 
-        periods = split_periods(series)
-        for name, part in periods.items():
-            dates = part if name == "forecast_dates" else part.index
-            print(f"  {name:<15} {len(dates):>3} months  {dates[0]:%Y-%m} -> {dates[-1]:%Y-%m}")
+    periods = split_periods(series)
+    for name, part in periods.items():
+        dates = part if name == "forecast_dates" else part.index
+        print(f"  {name:<15} {len(dates):>3} months  {dates[0]:%Y-%m} -> {dates[-1]:%Y-%m}")
 
-            # Baseline accuracy on the backtest year (Mar 2019 - Feb 2020)
-        actual = periods["backtest_test"]
-        baseline = seasonal_naive(series, actual.index)
-        print(f"\nBaseline (seasonal naive)  MAE {mae(actual, baseline):,.0f}   MAPE {mape(actual, baseline):.1f}%")
+    # Baseline accuracy on the backtest year (Mar 2019 - Feb 2020)
+    actual = periods["backtest_test"]
+    baseline = seasonal_naive(series, actual.index)
+    baseline_mape = mape(actual, baseline)
+    print(f"\nBaseline (seasonal naive)  MAE {mae(actual, baseline):,.0f}   MAPE {baseline_mape:.1f}%")
 
-            # Holt-Winters model on the same backtest year
-        forecast = fit_and_forecast(periods["backtest_train"], actual.index)
-        print(f"Holt-Winters (ETS)         MAE {mae(actual, forecast['predicted']):,.0f}   "
-            f"MAPE {mape(actual, forecast['predicted']):.1f}%")
+    # Compare training windows and seasonality types on the same backtest year
+    results, best = choose_model(series)
+    print("\nHolt-Winters (ETS) comparison, backtest Mar 2019 - Feb 2020:")
+    print(results[["train_start", "seasonal", "mae", "mape"]]
+          .round({"mae": 0, "mape": 2}).to_string(index=False))
+    print(f"\nBest: train from {best['train_start']}, seasonal={best['seasonal']}, "
+          f"MAPE {best['mape']:.1f}% (baseline {baseline_mape:.1f}%)")
 
-        # Month-by-month comparison
-        table = pd.DataFrame({
-            "actual": actual,
-            "baseline": baseline,
-            "model": forecast["predicted"],
-            "lower": forecast["lower"],
-            "upper": forecast["upper"],
-        }).round(0)
-        print()
-        print(table.to_string())
+    # Month-by-month view of the best model
+    best_periods = split_periods(series, best["start"])
+    forecast = fit_and_forecast(best_periods["backtest_train"], actual.index, seasonal=best["seasonal"])
+    table = pd.DataFrame({
+        "actual": actual,
+        "baseline": baseline,
+        "model": forecast["predicted"],
+        "lower": forecast["lower"],
+        "upper": forecast["upper"],
+    }).round(0)
+    inside = ((actual >= forecast["lower"]) & (actual <= forecast["upper"])).sum()
+    print()
+    print(table.to_string())
+    print(f"\n{inside} of {len(actual)} actual months fall inside the 80% interval")
+
+
 if __name__ == "__main__":
     main()
