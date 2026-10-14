@@ -112,6 +112,20 @@ def choose_model(series):
     return results, results.iloc[0]
 
 
+def covid_gap(forecast, actual):
+    """Compare actual counts with the forecast for the months where both exist.
+
+    gap_pct is relative to the forecast: -30 means crime was 30% below what the
+    model expected without COVID.
+    """
+    table = forecast.join(actual.rename("actual"), how="inner")
+    table["gap"] = table["actual"] - table["predicted"]
+    table["gap_pct"] = table["gap"] / table["predicted"] * 100
+    table["below_interval"] = table["actual"] < table["lower"]
+    overall_pct = (table["actual"].sum() / table["predicted"].sum() - 1) * 100
+    return table, float(overall_pct)
+
+
 def main():
     conn = connect()
     try:
@@ -154,6 +168,25 @@ def main():
     print()
     print(table.to_string())
     print(f"\n{inside} of {len(actual)} actual months fall inside the 80% interval")
+
+    # Final model: winning setup trained on everything up to Feb 2020
+    final_periods = split_periods(series, best["start"])
+    final_forecast = fit_and_forecast(
+        final_periods["train"], final_periods["forecast_dates"], seasonal=best["seasonal"]
+    )
+
+    # COVID gap: actual Mar-Jun 2020 vs. what the model expected
+    gap_table, overall_gap = covid_gap(final_forecast, final_periods["covid"])
+    print(f"\nCOVID period (model trained {best['train_start']} to {TRAIN_END}):")
+    print(gap_table[["actual", "predicted", "lower", "upper", "gap", "gap_pct", "below_interval"]]
+          .round({"actual": 0, "predicted": 0, "lower": 0, "upper": 0, "gap": 0, "gap_pct": 1})
+          .to_string())
+    print(f"\nOverall Mar-Jun 2020: crime was {abs(overall_gap):.1f}% "
+          f"{'below' if overall_gap < 0 else 'above'} the no-COVID forecast")
+
+    # Full 12-month forecast (saved to MySQL in 3.9)
+    print("\nForecast Mar 2020 - Feb 2021:")
+    print(final_forecast.round(0).to_string())
 
 
 if __name__ == "__main__":
