@@ -1,4 +1,7 @@
+import inspect
 import os
+
+import numpy as np
 import pandas as pd
 import pymysql
 import warnings
@@ -14,6 +17,11 @@ HORIZON = 12  # months to forecast
 # Combinations to compare in the backtest. None = start from the first month.
 TRAIN_STARTS = [None, "2012-01"]
 SEASONAL_TYPES = ["mul", "add"]
+
+# Per-crime-type forecasts (3.8): the most common types in the last full
+# pre-COVID year; smaller types are too noisy to forecast well.
+TOP_TYPES = 8
+RANK_YEAR = 2019
 
 
 def connect():
@@ -42,6 +50,35 @@ def load_series(conn):
     if len(missing):
         raise ValueError(f"monthly_trend is missing months: {[d.strftime('%Y-%m') for d in missing]}")
     return series
+
+
+def load_type_series(conn, index, top_n=TOP_TYPES):
+    """Return {crime type: monthly Series} for the top_n types by RANK_YEAR total.
+
+    Months with no crimes of a type have no row in monthly_trend_by_type, so
+    they are filled with 0 on the same monthly index as the citywide series.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT primary_type FROM monthly_trend_by_type WHERE year = %s "
+            "GROUP BY primary_type ORDER BY SUM(total) DESC LIMIT %s",
+            (RANK_YEAR, top_n),
+        )
+        types = [row[0] for row in cur.fetchall()]
+        placeholders = ", ".join(["%s"] * len(types))
+        cur.execute(
+            "SELECT primary_type, year, month, total FROM monthly_trend_by_type "
+            f"WHERE primary_type IN ({placeholders})",
+            types,
+        )
+        rows = cur.fetchall()
+
+    df = pd.DataFrame(rows, columns=["primary_type", "year", "month", "total"])
+    df["date"] = pd.to_datetime(dict(year=df["year"], month=df["month"], day=1))
+    wide = df.pivot(index="date", columns="primary_type", values="total")
+    wide = wide.reindex(index).fillna(0).astype(float)
+    return {t: wide[t].rename(t).asfreq("MS") for t in types}
+
 
 def split_periods(series,start=None):
 
@@ -89,7 +126,13 @@ def fit_and_forecast(train, dates, seasonal="mul", alpha=0.2):
         warnings.simplefilter("ignore")
         result = model.fit(disp=False)
 
-    frame = result.get_prediction(start=dates[0], end=dates[-1]).summary_frame(alpha=alpha)
+    # The interval is simulated from random draws; a fixed seed makes it
+    # identical on every run. statsmodels renamed the seed argument from
+    # random_state to rng, so pass whichever this version accepts.
+    seed_arg = "rng" if "rng" in inspect.signature(result.simulate).parameters else "random_state"
+    frame = result.get_prediction(
+        start=dates[0], end=dates[-1], **{seed_arg: np.random.RandomState(0)}
+    ).summary_frame(alpha=alpha)
     frame = frame.rename(columns={"mean": "predicted", "pi_lower": "lower", "pi_upper": "upper"})
     return frame[["predicted", "lower", "upper"]]
 
@@ -126,10 +169,38 @@ def covid_gap(forecast, actual):
     return table, float(overall_pct)
 
 
+def analyze_series(series, start, seasonal):
+    """Backtest, forecast and COVID gap for one series with a fixed model setup.
+
+    Returns (summary dict, 12-month forecast, COVID gap table), or None when the
+    series has months with no crimes, which a multiplicative-error model can't fit.
+    """
+    periods = split_periods(series, start)
+    if (periods["train"] <= 0).any():
+        return None
+
+    actual = periods["backtest_test"]
+    baseline = seasonal_naive(series, actual.index)
+    backtest = fit_and_forecast(periods["backtest_train"], actual.index, seasonal=seasonal)
+    forecast = fit_and_forecast(periods["train"], periods["forecast_dates"], seasonal=seasonal)
+    gap_table, overall_gap = covid_gap(forecast, periods["covid"])
+
+    summary = {
+        "series": series.name,
+        "baseline_mape": mape(actual, baseline),
+        "model_mape": mape(actual, backtest["predicted"]),
+        "covid_gap_pct": overall_gap,
+        "worst_month_gap_pct": float(gap_table["gap_pct"].min()),
+        "months_below": int(gap_table["below_interval"].sum()),
+    }
+    return summary, forecast, gap_table
+
+
 def main():
     conn = connect()
     try:
         series = load_series(conn)
+        type_series = load_type_series(conn, series.index)
     finally:
         conn.close()
 
@@ -187,6 +258,25 @@ def main():
     # Full 12-month forecast (saved to MySQL in 3.9)
     print("\nForecast Mar 2020 - Feb 2021:")
     print(final_forecast.round(0).to_string())
+
+    # Per-crime-type forecasts, using the setup chosen for the citywide series
+    summaries = []
+    forecasts = {"ALL": final_forecast}
+    for crime_type, type_data in type_series.items():
+        analysis = analyze_series(type_data, best["start"], best["seasonal"])
+        if analysis is None:
+            print(f"Skipping {crime_type}: some months have no crimes")
+            continue
+        summary, type_forecast, _ = analysis
+        summaries.append(summary)
+        forecasts[crime_type] = type_forecast
+
+    by_type = pd.DataFrame(summaries).sort_values("covid_gap_pct")
+    print(f"\nTop {len(by_type)} crime types (by {RANK_YEAR} count), same model setup:")
+    print(by_type.round({"baseline_mape": 1, "model_mape": 1, "covid_gap_pct": 1, "worst_month_gap_pct": 1})
+          .rename(columns={"months_below": "months_below_80pct"})
+          .to_string(index=False))
+    print("\ncovid_gap_pct = Mar-Jun 2020 vs. forecast; worst_month_gap_pct = the largest single-month drop")
 
 
 if __name__ == "__main__":
