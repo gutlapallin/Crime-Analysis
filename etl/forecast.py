@@ -23,6 +23,33 @@ SEASONAL_TYPES = ["mul", "add"]
 TOP_TYPES = 8
 RANK_YEAR = 2019
 
+# Output tables (3.9). The script replaces their contents on every run.
+FORECAST_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS crime_forecast (
+    series VARCHAR(100),
+    year INT,
+    month INT,
+    predicted DOUBLE,
+    lower_bound DOUBLE,
+    upper_bound DOUBLE,
+    actual DOUBLE NULL,
+    PRIMARY KEY (series, year, month)
+)"""
+
+METRICS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS forecast_metrics (
+    series VARCHAR(100) PRIMARY KEY,
+    model VARCHAR(200),
+    train_start CHAR(7),
+    train_end CHAR(7),
+    mae DOUBLE,
+    mape DOUBLE,
+    baseline_mape DOUBLE,
+    covid_gap_pct DOUBLE,
+    worst_month_gap_pct DOUBLE,
+    months_below_interval INT
+)"""
+
 
 def connect():
     return pymysql.connect(
@@ -188,12 +215,66 @@ def analyze_series(series, start, seasonal):
     summary = {
         "series": series.name,
         "baseline_mape": mape(actual, baseline),
+        "model_mae": mae(actual, backtest["predicted"]),
         "model_mape": mape(actual, backtest["predicted"]),
         "covid_gap_pct": overall_gap,
         "worst_month_gap_pct": float(gap_table["gap_pct"].min()),
         "months_below": int(gap_table["below_interval"].sum()),
     }
     return summary, forecast, gap_table
+
+
+def save_results(conn, forecasts, actuals, summaries, model_name, train_start):
+    """Replace the contents of crime_forecast and forecast_metrics with this run's results.
+
+    forecasts: {series name: forecast DataFrame}; actuals: {series name: actual
+    counts for the COVID months}, stored next to the forecast where they exist.
+    """
+    forecast_rows = []
+    for name, forecast in forecasts.items():
+        actual = actuals[name]
+        for date, row in forecast.iterrows():
+            value = actual.get(date)
+            forecast_rows.append((
+                name, date.year, date.month,
+                float(row["predicted"]), float(row["lower"]), float(row["upper"]),
+                None if value is None or pd.isna(value) else float(value),
+            ))
+
+    metric_rows = [
+        (
+            s["series"], model_name, train_start, TRAIN_END,
+            s["model_mae"], s["model_mape"], s["baseline_mape"],
+            s["covid_gap_pct"], s["worst_month_gap_pct"], s["months_below"],
+        )
+        for s in summaries
+    ]
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(FORECAST_TABLE_SQL)
+            cur.execute(METRICS_TABLE_SQL)
+            # Start fresh so series dropped from the top list don't linger
+            cur.execute("DELETE FROM crime_forecast")
+            cur.execute("DELETE FROM forecast_metrics")
+            cur.executemany(
+                "INSERT INTO crime_forecast "
+                "(series, year, month, predicted, lower_bound, upper_bound, actual) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                forecast_rows,
+            )
+            cur.executemany(
+                "INSERT INTO forecast_metrics "
+                "(series, model, train_start, train_end, mae, mape, baseline_mape, "
+                "covid_gap_pct, worst_month_gap_pct, months_below_interval) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                metric_rows,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(forecast_rows), len(metric_rows)
 
 
 def main():
@@ -260,8 +341,17 @@ def main():
     print(final_forecast.round(0).to_string())
 
     # Per-crime-type forecasts, using the setup chosen for the citywide series
-    summaries = []
+    summaries = [{
+        "series": "ALL",
+        "baseline_mape": baseline_mape,
+        "model_mae": float(best["mae"]),
+        "model_mape": float(best["mape"]),
+        "covid_gap_pct": overall_gap,
+        "worst_month_gap_pct": float(gap_table["gap_pct"].min()),
+        "months_below": int(gap_table["below_interval"].sum()),
+    }]
     forecasts = {"ALL": final_forecast}
+    actuals = {"ALL": final_periods["covid"]}
     for crime_type, type_data in type_series.items():
         analysis = analyze_series(type_data, best["start"], best["seasonal"])
         if analysis is None:
@@ -270,13 +360,27 @@ def main():
         summary, type_forecast, _ = analysis
         summaries.append(summary)
         forecasts[crime_type] = type_forecast
+        actuals[crime_type] = split_periods(type_data)["covid"]
 
-    by_type = pd.DataFrame(summaries).sort_values("covid_gap_pct")
+    by_type = pd.DataFrame(summaries[1:]).sort_values("covid_gap_pct")
     print(f"\nTop {len(by_type)} crime types (by {RANK_YEAR} count), same model setup:")
-    print(by_type.round({"baseline_mape": 1, "model_mape": 1, "covid_gap_pct": 1, "worst_month_gap_pct": 1})
+    print(by_type.drop(columns="model_mae")
+          .round({"baseline_mape": 1, "model_mape": 1, "covid_gap_pct": 1, "worst_month_gap_pct": 1})
           .rename(columns={"months_below": "months_below_80pct"})
           .to_string(index=False))
     print("\ncovid_gap_pct = Mar-Jun 2020 vs. forecast; worst_month_gap_pct = the largest single-month drop")
+
+    # Save everything for the website
+    seasonality = "additive" if best["seasonal"] == "add" else "multiplicative"
+    model_name = f"Holt-Winters ETS, damped additive trend, {seasonality} seasonality"
+    conn = connect()
+    try:
+        n_forecast, n_metrics = save_results(
+            conn, forecasts, actuals, summaries, model_name, best["train_start"]
+        )
+    finally:
+        conn.close()
+    print(f"\nSaved {n_forecast} rows to crime_forecast and {n_metrics} rows to forecast_metrics")
 
 
 if __name__ == "__main__":
