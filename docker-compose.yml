@@ -38,6 +38,7 @@ services:
     profiles: ["etl"]
     environment:
       JDBC_URL: jdbc:mysql://db:3306/cs179g
+      DB_HOST: db
       DB_PASSWORD: ${DB_PASSWORD}
       PARQUET_PATH: /data/clean_chicago_crime
     volumes:

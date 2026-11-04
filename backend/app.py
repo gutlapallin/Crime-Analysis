@@ -324,6 +324,82 @@ def generate_llm_insight():
     return jsonify(result)
 
 
+
+# Forecasts written by etl/forecast.py; recent history gives the chart context
+FORECAST_HISTORY_START = 2016
+
+
+@app.route("/api/forecast")
+def get_forecast():
+    series = request.args.get("series", "ALL")
+    try:
+        conn = pymysql.connect(**DB_CONFIG, cursorclass=pymysql.cursors.DictCursor)
+    except pymysql.MySQLError as e:
+        print(f"DB ERROR for forecast: {e}")
+        return jsonify({"error": "Could not connect to the database."}), 503
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT series FROM forecast_metrics ORDER BY series = 'ALL' DESC, series")
+            available = [row["series"] for row in cur.fetchall()]
+            if series not in available:
+                return jsonify({"error": f"Unknown series: {series}", "available": available}), 404
+
+            cur.execute("SELECT * FROM forecast_metrics WHERE series = %s", (series,))
+            metrics = cur.fetchone()
+
+            cur.execute(
+                "SELECT year, month, predicted, lower_bound, upper_bound, actual "
+                "FROM crime_forecast WHERE series = %s ORDER BY year, month",
+                (series,),
+            )
+            forecast = cur.fetchall()
+            if not metrics or not forecast:
+                return jsonify({"error": "No forecast yet. Run etl/forecast.py first."}), 503
+
+            # Actual history up to the month before the forecast starts
+            first = forecast[0]["year"] * 100 + forecast[0]["month"]
+            if series == "ALL":
+                cur.execute(
+                    "SELECT year, month, total_crimes AS value FROM monthly_trend "
+                    "WHERE year >= %s AND year * 100 + month < %s ORDER BY year, month",
+                    (FORECAST_HISTORY_START, first),
+                )
+            else:
+                cur.execute(
+                    "SELECT year, month, total AS value FROM monthly_trend_by_type "
+                    "WHERE primary_type = %s AND year >= %s AND year * 100 + month < %s "
+                    "ORDER BY year, month",
+                    (series, FORECAST_HISTORY_START, first),
+                )
+            history = cur.fetchall()
+    except pymysql.err.ProgrammingError as e:
+        print(f"DB ERROR for forecast: {e}")
+        return jsonify({"error": "No forecast yet. Run etl/forecast.py first."}), 503
+    finally:
+        conn.close()
+
+    def label(row):
+        return f"{row['year']}-{row['month']:02d}"
+
+    return jsonify({
+        "series": series,
+        "available": available,
+        "metrics": metrics,
+        "history": [{"date": label(r), "value": float(r["value"])} for r in history],
+        "forecast": [
+            {
+                "date": label(r),
+                "predicted": r["predicted"],
+                "lower": r["lower_bound"],
+                "upper": r["upper_bound"],
+                "actual": r["actual"],
+            }
+            for r in forecast
+        ],
+    })
+
+
 @app.route("/")
 def serve_react():
     if os.path.isdir(REACT_DIST) and os.path.isfile(os.path.join(REACT_DIST, "index.html")):
