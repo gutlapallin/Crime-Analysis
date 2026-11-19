@@ -5,15 +5,21 @@ from pyspark.sql.functions import (
     col, when, hour, month, dayofmonth, count, to_date, year,
 )
 import time
+from datetime import datetime
 from pyspark.sql.window import Window
 from pyspark.sql.functions import row_number
 from pyspark.sql.functions import col, count, regexp_replace, trim, upper 
+from pyspark.sql.functions import min as spark_min, max as spark_max, date_format
 
 PARQUET_PATH = os.environ.get("PARQUET_PATH", "./clean_chicago_crime")
 JDBC_URL = os.environ.get("JDBC_URL", "jdbc:mysql://127.0.0.1:3306/cs179g")
 JDBC_USER = os.environ.get("DB_USER", "root")
 JDBC_PASSWORD = os.environ.get("DB_PASSWORD", "")
 JDBC_DRIVER = "com.mysql.cj.jdbc.Driver"
+# The cleaned parquet timestamps were parsed in Pacific time (the class cluster's
+# time zone), so read them back in the same zone. Otherwise a UTC machine such as
+# the Docker container shifts every hour/day/month by 7-8 hours.
+SPARK_TIMEZONE = os.environ.get("SPARK_TIMEZONE", "America/Los_Angeles")
 
 def normalize_location(location_col):
     n = trim(upper(location_col))
@@ -62,6 +68,7 @@ def main():
 
     spark = SparkSession.builder \
         .appName("ChicagoCrimePart2") \
+        .config("spark.sql.session.timeZone", SPARK_TIMEZONE) \
         .getOrCreate()
 
     print("Reading cleaned data from Parquet...")
@@ -217,6 +224,47 @@ def main():
 
     yearly_crimes = df.groupBy("year").agg(count("*").alias("total_crimes")).orderBy("year")
     write_to_mysql(yearly_crimes, "yearly_crimes", spark)
+
+    # ---- Forecasting prep: find the date range of the data ----
+    # date_format makes Spark render the dates in its session time zone;
+    # collecting raw timestamps would convert them to the machine's clock instead
+    date_range = df.agg(
+        date_format(spark_min("date"), "yyyy-MM-dd HH:mm:ss").alias("min_date"),
+        date_format(spark_max("date"), "yyyy-MM-dd HH:mm:ss").alias("max_date"),
+    ).collect()[0]
+
+    min_date = date_range["min_date"]
+    max_date = date_range["max_date"]
+
+    print("Data starts:", min_date)
+    print("Data ends:  ", max_date)
+
+    # ---- Monthly time series for forecasting (one row per year + month) ----
+    # A data export is rarely pulled exactly at month end, so treat the last
+    # month as incomplete if the data stops before the 28th and leave it out.
+    last = datetime.strptime(max_date, "%Y-%m-%d %H:%M:%S")
+    drop_last_month = last.day < 28
+    if drop_last_month:
+        print("Dropping partial month {}-{:02d}".format(last.year, last.month))
+    else:
+        print("Last month {}-{:02d} is complete".format(last.year, last.month))
+
+    df_months = df.filter(col("year").isNotNull() & col("month").isNotNull())
+    if drop_last_month:
+        df_months = df_months.filter(
+            ~((col("year") == last.year) & (col("month") == last.month))
+        )
+
+    monthly_trend = df_months.groupBy("year", "month") \
+        .agg(count("*").alias("total_crimes")) \
+        .orderBy("year", "month")
+    write_to_mysql(monthly_trend, "monthly_trend", spark)
+
+    monthly_trend_by_type = df_months.filter(col("primary_type").isNotNull()) \
+        .groupBy("year", "month", "primary_type") \
+        .agg(count("*").alias("total")) \
+        .orderBy("year", "month", "primary_type")
+    write_to_mysql(monthly_trend_by_type, "monthly_trend_by_type", spark)
 
 
     keywords = "(?i).*(FISTS|MOTOR VEHICLE|SCOOTER|NON-VEH|NON-MOTOR VEHICLE|NEW STAND).*"

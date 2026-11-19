@@ -11,6 +11,8 @@ services:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
       interval: 5s
       retries: 20
+    ports:
+      - "3307:3306"
 
   app:
     build: .
@@ -21,6 +23,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-2.5-flash,gemini-2.5-flash-lite}
       READONLY_USER: ${READONLY_USER}
       READONLY_PASSWORD: ${READONLY_PASSWORD}
       RAW_PARQUET_GLOB: /data/clean_chicago_crime/*.parquet
@@ -35,6 +38,7 @@ services:
     profiles: ["etl"]
     environment:
       JDBC_URL: jdbc:mysql://db:3306/cs179g
+      DB_HOST: db
       DB_PASSWORD: ${DB_PASSWORD}
       PARQUET_PATH: /data/clean_chicago_crime
     volumes:
@@ -42,6 +46,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+
 
 volumes:
   dbdata:

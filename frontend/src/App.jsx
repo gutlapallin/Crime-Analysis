@@ -4,6 +4,7 @@ import ChartView from './components/ChartView'
 import InsightCard from './components/InsightCard'
 import { TABLE_META } from './constants/tables'
 import AskPanel from './AskPanel'
+import ForecastPanel from './ForecastPanel'
 
 function buildNotesText(title, notes) {
   const lines = [`Notes for: ${title}`]
@@ -223,6 +224,14 @@ export default function App() {
           >
             Ask the data
           </button>
+          <button
+            type="button"
+            className="home-tab-btn"
+            style={view === 'forecast' ? { fontWeight: 700 } : undefined}
+            onClick={() => setView('forecast')}
+          >
+            Forecast
+          </button>
           {selectedTable && view === 'explore' && (
             <button type="button" className="home-tab-btn" onClick={goHome}>
               Home
@@ -304,6 +313,12 @@ export default function App() {
           {view === 'ask' && (
             <section className="panel">
               <AskPanel />
+            </section>
+          )}
+
+          {view === 'forecast' && (
+            <section className="panel">
+              <ForecastPanel />
             </section>
           )}
 

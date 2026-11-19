@@ -134,3 +134,42 @@ CREATE TABLE IF NOT EXISTS halloween_vs_nonhalloween_by_type (
     total BIGINT,        
     PRIMARY KEY (day_type, primary_type)
 );
+
+CREATE TABLE IF NOT EXISTS monthly_trend (
+    year INT,
+    month INT,
+    total_crimes BIGINT,
+    PRIMARY KEY (year, month)
+);
+
+CREATE TABLE IF NOT EXISTS monthly_trend_by_type (
+    year INT,
+    month INT,
+    primary_type VARCHAR(100),
+    total BIGINT,
+    PRIMARY KEY (year, month, primary_type)
+);
+
+CREATE TABLE IF NOT EXISTS crime_forecast (
+    series VARCHAR(100),
+    year INT,
+    month INT,
+    predicted DOUBLE,
+    lower_bound DOUBLE,
+    upper_bound DOUBLE,
+    actual DOUBLE NULL,
+    PRIMARY KEY (series, year, month)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_metrics (
+    series VARCHAR(100) PRIMARY KEY,
+    model VARCHAR(200),
+    train_start CHAR(7),
+    train_end CHAR(7),
+    mae DOUBLE,
+    mape DOUBLE,
+    baseline_mape DOUBLE,
+    covid_gap_pct DOUBLE,
+    worst_month_gap_pct DOUBLE,
+    months_below_interval INT
+);

@@ -1,1 +1,5 @@
 pyspark==3.5.1
+pandas
+statsmodels
+pymysql
+cryptography

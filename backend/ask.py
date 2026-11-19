@@ -1,7 +1,9 @@
 import json
+import logging
 import os
 import re
 import time
+from decimal import Decimal
 import pymysql
 import sqlglot
 from sqlglot import exp
@@ -10,6 +12,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from raw_engine import RAW_SCHEMA, validate_raw_sql, run_raw
 from table_docs import TABLE_DOCS
+from quick_answers import quick_answer
+
+log = logging.getLogger(__name__)
 
 ALLOWED = {d["table"] for d in TABLE_DOCS}
 DOCS_BY_TABLE = {d["table"]: d for d in TABLE_DOCS}
@@ -33,8 +38,13 @@ def _get_store():
 
 
 def retrieve_tables(question, k=4):
-    hits = _get_store().similarity_search(question, k=k)
-    return [DOCS_BY_TABLE[h.metadata["table"]] for h in hits]
+    try:
+        hits = _get_store().similarity_search(question, k=k)
+        return [DOCS_BY_TABLE[h.metadata["table"]] for h in hits]
+    except Exception:
+        # The table list is small, so fall back to all of it if embeddings fail
+        log.exception("Table retrieval failed; using all tables")
+        return TABLE_DOCS
 
 
 SQL_PROMPT = ChatPromptTemplate.from_messages([
@@ -88,9 +98,12 @@ def validate_sql(sql):
 
 
 def run_readonly(sql):
+    # docker-compose passes unset vars as "", so fall back with `or`
+    readonly_user = os.getenv("READONLY_USER")
     cfg = {
-        "user": os.getenv("READONLY_USER", "readonly"),
-        "password": os.getenv("READONLY_PASSWORD", ""),
+        "user": readonly_user or os.getenv("DB_USER") or "root",
+        "password": (os.getenv("READONLY_PASSWORD") if readonly_user
+                     else os.getenv("DB_PASSWORD")) or "",
         "database": os.getenv("DB_NAME", "cs179g"),
         "read_timeout": 10,
         "cursorclass": pymysql.cursors.DictCursor,
@@ -117,19 +130,112 @@ def _text(msg):
 
 
 def _json(text):
-    return json.loads(re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip())
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, flags=re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+    return {"answer": text, "chart": "none", "x": "", "y": ""}
+
 
 def _invoke(chain, inputs, tries=3):
+    # Retry brief outages only; retrying a quota (429) error just burns more quota
     for attempt in range(tries):
         try:
             return chain.invoke(inputs)
         except Exception as e:
-            transient = any(s in str(e) for s in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
+            transient = any(s in str(e) for s in ("503", "UNAVAILABLE"))
             if not transient or attempt == tries - 1:
                 raise
             time.sleep(2 * (attempt + 1))
 
+
+def _is_number(v):
+    return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
+
+
+def _fallback_answer(rows):
+    """Plain summary used when the model can't write one, so the data still shows."""
+    if not rows:
+        return {"answer": "The query ran but returned no rows.", "chart": "none", "x": "", "y": ""}
+    cols = list(rows[0].keys())
+    y = next((c for c in reversed(cols) if _is_number(rows[0][c])), None)
+    x = next((c for c in cols if c != y), None)
+    if not y or not x:
+        return {"answer": f"Here are the results ({len(rows)} rows).", "chart": "none", "x": "", "y": ""}
+    top = max(rows, key=lambda r: float(r[y] or 0))
+    return {
+        "answer": f"Here are the results ({len(rows)} rows). The highest {y} is {top[y]} for {x} {top[x]}.",
+        "chart": "bar" if len(rows) > 1 else "none",
+        "x": x,
+        "y": y,
+    }
+
+
+_cache = {}
+_CACHE_MAX = 200
+
+# After a quota error, skip the model for a while and use built-in answers
+_QUOTA_COOLDOWN = 600
+_llm_down_until = 0.0
+
+
+def _is_quota_error(e):
+    return "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
+
+
+def _remember(key, result):
+    if len(_cache) >= _CACHE_MAX:
+        _cache.pop(next(iter(_cache)))
+    _cache[key] = result
+
+
 def answer_question(question, llm):
+    global _llm_down_until
+    question = (question or "").strip()[:500]
+    if not question:
+        return {"error": "Please enter a question."}, 400
+    key = " ".join(question.lower().split())
+    if key in _cache:
+        return _cache[key], 200
+
+    failure = None
+    if llm is not None and time.time() >= _llm_down_until:
+        try:
+            result, status = _answer_question(question, llm)
+            if status == 200:
+                _remember(key, result)
+                return result, status
+            failure = result
+        except Exception as e:
+            log.exception("Ask request failed; trying a built-in answer")
+            if _is_quota_error(e):
+                _llm_down_until = time.time() + _QUOTA_COOLDOWN
+            failure = {"error": f"Could not answer the question: {e}"}
+
+    try:
+        result = quick_answer(question, run_readonly)
+    except Exception:
+        log.exception("Built-in answer failed")
+        result = None
+    if result:
+        _remember(key, result)
+        return result, 200
+
+    if failure and not _is_quota_error(failure.get("error", "")) and llm is not None \
+            and time.time() >= _llm_down_until:
+        return failure, 502
+    return {"error": "The AI model is busy right now, so only common questions can be answered "
+                     "(time of day, months, seasons, years, holidays, locations, community areas). "
+                     "Try one of the example questions."}, 503
+
+
+def _answer_question(question, llm):
     question = (question or "").strip()[:500]
     if not question:
         return {"error": "Please enter a question."}, 400
@@ -159,22 +265,13 @@ def answer_question(question, llm):
     except Exception as e:
         return {"error": f"Query failed: {e}", "sql": sql}, 500
 
-    out = _json(_text(_invoke(ANSWER_PROMPT | llm,
-        {"question": question, "sql": sql, "rows": json.dumps(rows, default=str)[:20000]})))
+    try:
+        out = _json(_text(_invoke(ANSWER_PROMPT | llm,
+            {"question": question, "sql": sql, "rows": json.dumps(rows, default=str)[:20000]})))
+    except Exception:
+        log.exception("Answer summary failed; showing the data without it")
+        out = _fallback_answer(rows)
     used = sorted({t.name for t in sqlglot.parse_one(
         sql, read="duckdb" if is_raw else "mysql").find_all(exp.Table)})
     out.update({"sql": sql, "rows": rows, "tables_used": used, "source": source})
     return out, 200
-
-import time
-
-
-def _invoke(chain, inputs, tries=3):
-    for attempt in range(tries):
-        try:
-            return chain.invoke(inputs)
-        except Exception as e:
-            transient = any(s in str(e) for s in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
-            if not transient or attempt == tries - 1:
-                raise
-            time.sleep(2 * (attempt + 1))
